@@ -96,15 +96,18 @@ class OLOP(AbstractPlanner):
         # Pick best sequence of actions
         best_sequence = list(self.leaves[np.argmax(sequences_upper_bounds)].path())
 
-        if self.config["lazy_tree_construction"]:
+        # if self.config["lazy_tree_construction"]:
             # If the sequence length is shorter than the horizon, all continuations have the same upper-bounds.
             # Pick one continuation arbitrarily. Here, pad with the sequence [0, ..., 0].
-            best_sequence = best_sequence[:self.config["horizon"]] + [0]*(self.config["horizon"] - len(best_sequence))
+            # best_sequence = best_sequence[:self.config["horizon"]] + [0]*(self.config["horizon"] - len(best_sequence))
+            # best_sequence = best_sequence[:self.config["horizon"]] \
+            #                 + np.random.choice(range(state.action_space.n), self.config["horizon"] - len(best_sequence)).tolist()
 
         # Execute sequence, expand tree if needed, collect rewards and update upper confidence bounds.
         node = self.root
         for action in best_sequence:
             observation, reward, done, _ = state.step(action)
+            self.config["budget"] -= 1
             if not node.children:
                 self.leaves = node.expand(state, self.leaves, update_children=True)
             if action not in node.children:  # Default action may not be available
@@ -113,6 +116,8 @@ class OLOP(AbstractPlanner):
             node.update(reward, done)
             if node.done:
                 break
+        if not node.children:
+            self.leaves = node.expand(state, self.leaves, update_children=True)
 
     def compute_ucbs(self, node, path):
         """
@@ -165,9 +170,11 @@ class OLOP(AbstractPlanner):
             return min_value
 
     def plan(self, state, observation):
-        for self.episode in range(self.config['episodes']):
-            if (self.episode+1) % 10 == 0:
-                logger.debug('{} / {}'.format(self.episode+1, self.config['episodes']))
+        # for self.episode in range(self.config['episodes']):
+        #     if (self.episode+1) % 10 == 0:
+        #         logger.debug('{} / {}'.format(self.episode+1, self.config['episodes']))
+        #     self.run(safe_deepcopy_env(state))
+        while self.config['budget'] > 0:
             self.run(safe_deepcopy_env(state))
 
         return self.get_plan()
@@ -233,6 +240,7 @@ class OLOPNode(Node):
             self.children[action] = type(self)(self,
                                                self.planner)
             if update_children:
+                self.planner.config["budget"] -= 1
                 _, reward, done, _ = safe_deepcopy_env(state).step(action)
                 self.children[action].update(reward, done)
 
