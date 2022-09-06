@@ -1,22 +1,14 @@
+import logging
+import os
+import re
+import shutil
+
 import numpy as np
+from subprocess import PIPE, run, check_output
+import torch
 
 
-def near_split(x, num_bins=None, size_bins=None):
-    """
-        Split a number into several bins with near-even distribution.
-
-        You can either set the number of bins, or their size.
-        The sum of bins always equals the total.
-    :param x: number to split
-    :param num_bins: number of bins
-    :param size_bins: size of bins
-    :return: list of bin sizes
-    """
-    if num_bins:
-        quotient, remainder = divmod(x, num_bins)
-        return [quotient + 1] * remainder + [quotient] * (num_bins - remainder)
-    elif size_bins:
-        return near_split(x, num_bins=int(np.ceil(x / size_bins)))
+logger = logging.getLogger(__name__)
 
 
 def sample_simplex(coeff, bias, min_x, max_x, np_random=np.random):
@@ -59,3 +51,54 @@ def sample_simplex(coeff, bias, min_x, max_x, np_random=np.random):
     last_index = remain_indexes[0]
     x[last_index] = bias / coeff[last_index]
     return x
+
+
+def load_pytorch():
+    torch.backends.cudnn.benchmark = False
+    torch.backends.cudnn.enabled = False
+    logger.info("Using torch.multiprocessing.set_start_method('spawn')")
+    import torch.multiprocessing as multiprocessing
+    try:
+        multiprocessing.set_start_method('spawn')
+    except RuntimeError as e:
+        logger.warning(str(e))
+
+
+def get_gpu_memory_map():
+    result = check_output(['nvidia-smi', '--query-gpu=memory.used', '--format=csv,nounits,noheader'])
+    return [int(x) for x in result.split()]
+
+
+def least_used_device():
+    """ Get the  GPU device with most available memory. """
+    if not torch.cuda.is_available():
+        raise RuntimeError("cuda unavailable")
+
+    if shutil.which('nvidia-smi') is None:
+        raise RuntimeError("nvidia-smi unavailable: cannot select device with most least memory used.")
+
+    memory_map = get_gpu_memory_map()
+    device_id = np.argmin(memory_map)
+    logger.info("Choosing GPU device: {}, memory used: {}".format(device_id, memory_map[device_id]))
+    return torch.device("cuda:{}".format(device_id))
+
+
+def choose_device(preferred_device, default_device="cpu"):
+    try:
+        if preferred_device == "cuda:best":
+            preferred_device = least_used_device()
+        torch.zeros((1,), device=preferred_device)  # Test availability
+        return preferred_device
+    except (RuntimeError, AssertionError):
+        logger.warning("Preferred device {} unavailable, switching to default {}"
+                     .format(preferred_device, default_device))
+        return default_device
+
+
+def get_memory(pid=None):
+    if not pid:
+        pid = os.getpid()
+    command = "nvidia-smi"
+    result = run(command, stdout=PIPE, stderr=PIPE, universal_newlines=True, shell=True).stdout
+    m = re.findall("\| *[0-9] *" + str(pid) + " *C *.*python.*? +([0-9]+).*\|", result, re.MULTILINE)
+    return [int(mem) for mem in m]

@@ -2,7 +2,7 @@
 
 A collection of Reinforcement Learning agents
 
-[![Build Status](https://travis-ci.org/eleurent/rl-agents.svg?branch=master)](https://travis-ci.org/eleurent/rl-agents/)
+![build](https://github.com/eleurent/rl-agents/workflows/build/badge.svg)
 
 * [Installation](#installation)
 * [Usage](#usage)
@@ -16,6 +16,7 @@ A collection of Reinforcement Learning agents
       * [Deterministic Optimistic Planning](#opd-optimistic-planning-for-deterministic-systems)
       * [Open Loop Optimistic Planning](#olop-open-loop-optimistic-planning)
       * [Trailblazer](#trailblazer)
+      * [PlaTγPOOS](#plaTγpoos)
   * Safe planning
     * [Robust Value Iteration](#rvi-robust-value-iteration)
     * [Discrete Robust Optimistic Planning](#drop-discrete-robust-optimistic-planning)
@@ -24,7 +25,8 @@ A collection of Reinforcement Learning agents
     * [Deep Q-Network](#dqn-deep-q-network)
     * [Fitted-Q](#ftq-fitted-q)
   * Safe value-based
-    * [Budgeted Fitted-Q](#bftq-budgeted-fitted-q-meat_on_bone)
+    * [Budgeted Fitted-Q](#bftq-budgeted-fitted-q)
+* [Citing](#citing) 
 
 # Installation
 
@@ -33,7 +35,8 @@ A collection of Reinforcement Learning agents
 
 # Usage
 
-Most experiments can be run from `scripts/experiments.py`
+Most experiments can be started by moving to 
+`cd scripts` and running `python experiments.py`
 
 ```
 Usage:
@@ -61,7 +64,7 @@ The `evaluate` command allows to evaluate a given agent on a given environment. 
 
 ```bash
 # Train a DQN agent on the CartPole-v0 environment
-$ python3 experiments.py evaluate envs/cartpole.json agents/dqn.json --train --episodes=200
+$ python3 experiments.py evaluate configs/CartPoleEnv/env.json configs/CartPoleEnv/DQNAgent.json --train --episodes=200
 ```
 
 Every agent interacts with the environment following a standard interface:
@@ -71,10 +74,11 @@ next_state, reward, done, info = env.step(action)
 agent.record(state, action, reward, next_state, done, info)
 ```
 
-The environments are described by their [gym](https://github.com/openai/gym) registration `id`
+The environments are described by their [gym](https://github.com/openai/gym) `id`, and module for registration.
 ```JSON
 {
-    "id":"CartPole-v0"
+    "id": "CartPole-v0",
+    "import_module": "gym"
 }
 ```
 
@@ -84,7 +88,7 @@ And the agents by their class, and configuration dictionary.
 {
     "__class__": "<class 'rl_agents.agents.deep_q_network.pytorch.DQNAgent'>",
     "model": {
-        "type": "DuelingNetwork",
+        "type": "MultiLayerPerceptron",
         "layers": [512, 512]
     },
     "gamma": 0.99,
@@ -111,7 +115,7 @@ All experiments are then executed in parallel on several processes.
 $ python3 experiments.py benchmark cartpole_benchmark.json --test --processes=4
 ```
 
-A benchmark configuration files contains a list of environment configurations and a list of agent configurations.
+A benchmark configuration file contains a list of environment configurations and a list of agent configurations.
 
 ```JSON
 {
@@ -122,9 +126,9 @@ A benchmark configuration files contains a list of environment configurations an
 
 # Monitoring
 
-There are a few tools available to monitor the agent performances:
+There are several tools available to monitor the agent performances:
 * *Run metadata*: for the sake of reproducibility, the environment and agent configurations used for the run are merged and saved to a `metadata.*.json` file.
-* [*Gym Monitor*](https://github.com/openai/gym/blob/master/gym/wrappers/monitor.py): the main statistics (episode rewards, lengths, seeds) of are logged to an `episode_batch.*.stats.json` file. They can be automatically visualised by running `scripts/analyze.py`
+* [*Gym Monitor*](https://github.com/openai/gym/blob/master/gym/wrappers/monitor.py): the main statistics (episode rewards, lengths, seeds) of each run are logged to an `episode_batch.*.stats.json` file. They can be automatically visualised by running `scripts/analyze.py`
 * [*Logging*](https://docs.python.org/3/howto/logging.html): agents can send messages through the standard python logging library. By default, all messages with log level _INFO_ are saved to a `logging.*.log` file. Add the option `scripts/experiments.py --verbose` to save with log level _DEBUG_.
 * [*Tensorboard*](https://github.com/lanpa/tensorboardX): by default, a tensoboard writer records information about useful scalars, images and model graphs to the run directory. It can be visualized by running:
 ```tensorboard --logdir <path-to-runs-dir>```
@@ -135,7 +139,7 @@ The following agents are currently implemented:
 
 ## Planning
 
-### [`VI` Value Iteration](rl_agents/agents/dynamics_programming/value_iteration.py)
+### [`VI` Value Iteration](rl_agents/agents/dynamic_programming/value_iteration.py)
 
 Perform a Value Iteration to compute the state-action value, and acts greedily with respect to it.
 
@@ -174,11 +178,18 @@ Reference: [Optimistic Planning for Deterministic Systems](https://hal.inria.fr/
 
 #### [`OLOP` Open Loop Optimistic Planning](rl_agents/agents/tree_search/olop.py)
 
-Reference: [Open Loop Optimistic Planning](http://sbubeck.com/COLT10_BM.pdf), Bubeck S., Munos R. (2010).
+References: 
+* [Open Loop Optimistic Planning](http://sbubeck.com/COLT10_BM.pdf), Bubeck S., Munos R. (2010).
+* [Practical Open-Loop Optimistic Planning](https://arxiv.org/abs/1904.04700), Leurent E., Maillard O.-A. (2019).
 
 #### [Trailblazer](rl_agents/agents/tree_search/trailblazer.py)
 
 Reference: [Blazing the trails before beating the path: Sample-efficient Monte-Carlo planning](http://researchers.lille.inria.fr/~valko/hp/serve.php?what=publications/grill2016blazing.pdf), Grill J. B., Valko M., Munos R. (2017).
+
+#### [PlaTγPOOS](rl_agents/agents/tree_search/platypoos.py)
+
+Reference: [Scale-free adaptive planning for deterministic dynamics & discounted rewards](http://researchers.lille.inria.fr/~valko/hp/publications/bartlett2019scale-free.pdf), Bartlett P., Gabillon V., Healey J., Valko M. (2019).
+
 
 ## Safe planning
 
@@ -191,7 +202,7 @@ References:
 * [Robust Dynamic Programming](http://www.corc.ieor.columbia.edu/reports/techreports/tr-2002-07.pdf), Iyengar G. (2005).
 * [Robust Markov Decision Processes](http://www.optimization-online.org/DB_FILE/2010/05/2610.pdf), Wiesemann W. et al. (2012).
 
-### [`DROP` Discrete Robust Optimistic Planning](rl_agents/agents/tree_search/robust.py)
+### [`DROP` Discrete Robust Optimistic Planning](rl_agents/agents/robust/robust.py)
 
 The MDP ambiguity set is assumed to be finite, and is constructed from a list of modifiers to the true environment.
 The corresponding robust value is approximately computed by [Deterministic Optimistic Planning](#deterministic-optimistic-planning) so as to maximize the worst-case total reward.
@@ -199,7 +210,7 @@ The corresponding robust value is approximately computed by [Deterministic Optim
 References:
 * [Approximate Robust Control of Uncertain Dynamical Systems](https://arxiv.org/abs/1903.00220), Leurent E. et al. (2018).
 
-### [`IRP` Interval-based Robust Planning](rl_agents/agents/tree_search/robust.py)
+### [`IRP` Interval-based Robust Planning](rl_agents/agents/robust/robust.py)
 
 We assume that the MDP is a parametrized dynamical system, whose parameter is uncertain and lies in a continuous ambiguity set. We use interval prediction to compute the set of states that can be reached at any time _t_, given that uncertainty, and leverage it to evaluate and improve a robust policy.
 
@@ -234,7 +245,7 @@ Reference: [Tree-Based Batch Mode Reinforcement Learning](http://www.jmlr.org/pa
 
 ## Safe Value-based
 
-### [`BFTQ` Budgeted Fitted-Q :meat_on_bone:](rl_agents/agents/budgeted_ftq "\bif.tɛk\ ")
+### [`BFTQ` Budgeted Fitted-Q](rl_agents/agents/budgeted_ftq)
 
 An adaptation of **`FTQ`** in the budgeted setting: we maximise the expected reward _r_ of a policy _π_ under the constraint that an expected cost _c_ remains under a given budget _β_.
 The policy _π(a | s, _β_)_ is conditioned on this cost budget _β_, which can be changed online.
@@ -249,3 +260,17 @@ This agent can only be used with environments that provide a cost signal in thei
 ``` 
 
 Reference: [Budgeted Reinforcement Learning in Continuous State Space](https://arxiv.org/abs/1903.01004), Carrara N., Leurent E., Laroche R., Urvoy T., Maillard O-A., Pietquin O. (2019).
+
+# Citing
+
+If you use this project in your work, please consider citing it with:
+```
+@misc{rl-agents,
+  author = {Leurent, Edouard},
+  title = {rl-agents: Implementations of Reinforcement Learning algorithms},
+  year = {2018},
+  publisher = {GitHub},
+  journal = {GitHub repository},
+  howpublished = {\url{https://github.com/eleurent/rl-agents}},
+}
+```

@@ -2,6 +2,7 @@
     Adapted from the original implementation by Nicolas Carrara <https://github.com/ncarrara>.
 """
 from rl_agents.agents.budgeted_ftq.graphics import plot_values_histograms, plot_frontier
+from rl_agents.agents.common.utils import choose_device
 
 __author__ = "Edouard Leurent"
 __credits__ = ["Nicolas Carrara"]
@@ -14,8 +15,8 @@ import logging
 
 from rl_agents.agents.budgeted_ftq.greedy_policy import TransitionBFTQ, pareto_frontier, \
     optimal_mixture
-from rl_agents.agents.budgeted_ftq.models import loss_function_factory, optimizer_factory
-from rl_agents.agents.common.utils import near_split
+from rl_agents.agents.common.optimizers import loss_function_factory, optimizer_factory
+from rl_agents.utils import near_split
 from rl_agents.agents.common.memory import ReplayMemory
 
 logger = logging.getLogger(__name__)
@@ -30,7 +31,7 @@ class BudgetedFittedQ(object):
         self.betas_for_discretisation = parse(self.config["betas_for_discretisation"])
         self.loss_function = loss_function_factory(self.config["loss_function"])
         self.loss_function_c = loss_function_factory(self.config["loss_function_c"])
-        self.device = self.config["device"]
+        self.device = choose_device(self.config["device"])
 
         # Load network
         self._value_network = value_network
@@ -38,9 +39,10 @@ class BudgetedFittedQ(object):
         self.n_actions = self._value_network.predict.out_features // 2
 
         self.writer = writer
-        self.writer.add_graph(self._value_network,
-                              input_to_model=torch.tensor(np.zeros((1, 1, self._value_network.size_state + 1),
-                                                                   dtype=np.float32)).to(self.device))
+        if writer:
+            self.writer.add_graph(self._value_network,
+                                  input_to_model=torch.tensor(np.zeros((1, 1, self._value_network.size_state + 1),
+                                                                       dtype=np.float32)).to(self.device))
 
         self.memory = ReplayMemory(transition_type=TransitionBFTQ, config=self.config)
         self.optimizer = None
@@ -54,7 +56,7 @@ class BudgetedFittedQ(object):
         """
         action = torch.tensor([[action]], dtype=torch.long)
         reward = torch.tensor([reward], dtype=torch.float)
-        terminal = torch.tensor([terminal], dtype=torch.uint8)
+        terminal = torch.tensor([terminal], dtype=torch.bool)
         cost = torch.tensor([cost], dtype=torch.float)
         state = torch.tensor([[state]], dtype=torch.float)
         next_state = torch.tensor([[next_state]], dtype=torch.float)
@@ -164,8 +166,8 @@ class BudgetedFittedQ(object):
 
         # Greedy policy computation pi(a'|s')
         # 1. Select non-final next states
-        next_states_nf = next_states[1 - terminals]
-        betas_nf = betas[1 - terminals]
+        next_states_nf = next_states[~terminals]
+        betas_nf = betas[~terminals]
         # 2. Forward pass of the model Qr, Qc
         q_values = self.compute_next_values(next_states_nf)
         # 3. Compute Pareto-optimal frontiers F of {(Qc, Qr)}_AB at all states
@@ -179,8 +181,8 @@ class BudgetedFittedQ(object):
         for i, mix in enumerate(mixtures):
             next_rewards_nf[i] = (1 - mix.probability_sup) * mix.inf.qr + mix.probability_sup * mix.sup.qr
             next_costs_nf[i] = (1 - mix.probability_sup) * mix.inf.qc + mix.probability_sup * mix.sup.qc
-        next_rewards[1 - terminals] = next_rewards_nf
-        next_costs[1 - terminals] = next_costs_nf
+        next_rewards[~terminals] = next_rewards_nf
+        next_costs[~terminals] = next_costs_nf
 
         torch.cuda.empty_cache()
         return next_rewards, next_costs
@@ -222,16 +224,16 @@ class BudgetedFittedQ(object):
                         self.config["hull_options"],
                         self.config["clamp_qc"])
                        for state in range(states_count)]
-        if self.config["cpu_processes"] == 1:
+        if self.config["processes"] == 1:
             results = [pareto_frontier(*param) for param in hull_params]
         else:
-            with Pool(self.config["cpu_processes"]) as p:
+            with Pool(self.config["processes"]) as p:
                 results = p.starmap(pareto_frontier, hull_params)
         frontiers, all_points = zip(*results)
 
         torch.cuda.empty_cache()
         for s in [0, -1]:
-            plot_frontier(frontiers[s], all_points[s], self.writer, self.epoch, title="Hull {} batch {}".format(s, self.batch))
+            plot_frontier(frontiers[s], all_points[s], self.writer, self.epoch, title="agent/Hull {} batch {}".format(s, self.batch))
         return frontiers
 
     def compute_all_optimal_mixtures(self, frontiers, betas):
@@ -240,10 +242,10 @@ class BudgetedFittedQ(object):
         """
         logger.debug("-Compute optimal mixtures")
         params = [(frontiers[i], beta.detach().item()) for i, beta in enumerate(betas)]
-        if self.config["cpu_processes"] == 1:
+        if self.config["processes"] == 1:
             optimal_policies = [optimal_mixture(*param) for param in params]
         else:
-            with Pool(self.config["cpu_processes"]) as p:
+            with Pool(self.config["processes"]) as p:
                 optimal_policies = p.starmap(optimal_mixture, params)
         return optimal_policies
 

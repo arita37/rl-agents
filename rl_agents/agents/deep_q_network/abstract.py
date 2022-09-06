@@ -1,7 +1,9 @@
 from abc import ABC, abstractmethod
+import numpy as np
+from gym import spaces
 
 from rl_agents.agents.common.abstract import AbstractStochasticAgent
-from rl_agents.agents.common.exploration.common import exploration_factory
+from rl_agents.agents.common.exploration.abstract import exploration_factory
 from rl_agents.agents.common.memory import ReplayMemory, Transition
 
 
@@ -9,10 +11,8 @@ class AbstractDQNAgent(AbstractStochasticAgent, ABC):
     def __init__(self, env, config=None):
         super(AbstractDQNAgent, self).__init__(config)
         self.env = env
-        self.config["num_states"] = env.observation_space.shape[0]
-        self.config["num_actions"] = env.action_space.n
-        self.config["model"]["all_layers"] = \
-            [self.config["num_states"]] + self.config["model"]["layers"] + [self.config["num_actions"]]
+        assert isinstance(env.action_space, spaces.Discrete) or isinstance(env.action_space, spaces.Tuple), \
+            "Only compatible with Discrete action spaces."
         self.memory = ReplayMemory(self.config)
         self.exploration_policy = exploration_factory(self.config["exploration"], self.env.action_space)
         self.training = True
@@ -20,14 +20,19 @@ class AbstractDQNAgent(AbstractStochasticAgent, ABC):
 
     @classmethod
     def default_config(cls):
-        return dict(model=dict(type="DuelingNetwork",
-                               layers=[100, 100]),
-                    optimizer=dict(lr=5e-4),
+        return dict(model=dict(type="DuelingNetwork"),
+                    optimizer=dict(type="ADAM",
+                                   lr=5e-4,
+                                   weight_decay=0,
+                                   k=5),
+                    loss_function="l2",
                     memory_capacity=50000,
                     batch_size=100,
                     gamma=0.99,
+                    device="cuda:best",
                     exploration=dict(method="EpsilonGreedy"),
-                    target_update=1)
+                    target_update=1,
+                    double=True)
 
     def record(self, state, action, reward, next_state, done, info):
         """
@@ -46,22 +51,35 @@ class AbstractDQNAgent(AbstractStochasticAgent, ABC):
         """
         if not self.training:
             return
-        self.memory.push(state, action, reward, next_state, done, info)
+        if isinstance(state, tuple) and isinstance(action, tuple):  # Multi-agent setting
+            [self.memory.push(agent_state, agent_action, reward, agent_next_state, done, info)
+             for agent_state, agent_action, agent_next_state in zip(state, action, next_state)]
+        else:  # Single-agent setting
+            self.memory.push(state, action, reward, next_state, done, info)
         batch = self.sample_minibatch()
         if batch:
-            loss, _ = self.compute_bellman_residual(batch)
+            loss, _, _ = self.compute_bellman_residual(batch)
             self.step_optimizer(loss)
             self.update_target_network()
 
-    def act(self, state):
+    def act(self, state, step_exploration_time=True):
         """
             Act according to the state-action value model and an exploration policy
         :param state: current state
+        :param step_exploration_time: step the exploration schedule
         :return: an action
         """
         self.previous_state = state
+        if step_exploration_time:
+            self.exploration_policy.step_time()
+        # Handle multi-agent observations
+        # TODO: it would be more efficient to forward a batch of states
+        if isinstance(state, tuple):
+            return tuple(self.act(agent_state, step_exploration_time=False) for agent_state in state)
+
+        # Single-agent setting
         values = self.get_state_action_values(state)
-        self.exploration_policy.update(values, time=True)
+        self.exploration_policy.update(values)
         return self.exploration_policy.sample()
 
     def sample_minibatch(self):
@@ -73,7 +91,7 @@ class AbstractDQNAgent(AbstractStochasticAgent, ABC):
     def update_target_network(self):
         self.steps += 1
         if self.steps % self.config["target_update"] == 0:
-            self.target_net.load_state_dict(self.policy_net.state_dict())
+            self.target_net.load_state_dict(self.value_net.state_dict())
 
     @abstractmethod
     def compute_bellman_residual(self, batch, target_state_action_value=None):
@@ -84,7 +102,7 @@ class AbstractDQNAgent(AbstractStochasticAgent, ABC):
                                           if not, it will be computed from batch and model (Double DQN target)
         :return: the loss over the batch, and the computed target
         """
-        raise NotImplementedError()
+        raise NotImplementedError
 
     @abstractmethod
     def get_batch_state_values(self, states):
@@ -95,7 +113,7 @@ class AbstractDQNAgent(AbstractStochasticAgent, ABC):
                  - [V1; ...; VN] the array of the state values for each state
                  - [a1*; ...; aN*] the array of corresponding optimal action indexes for each state
         """
-        raise NotImplementedError()
+        raise NotImplementedError
 
     @abstractmethod
     def get_batch_state_action_values(self, states):
@@ -104,7 +122,7 @@ class AbstractDQNAgent(AbstractStochasticAgent, ABC):
         :param states: [s1; ...; sN] an array of states
         :return: values:[[Q11, ..., Q1n]; ...] the array of all action values for each state
         """
-        raise NotImplementedError()
+        raise NotImplementedError
 
     def get_state_value(self, state):
         """
@@ -121,17 +139,30 @@ class AbstractDQNAgent(AbstractStochasticAgent, ABC):
         """
         return self.get_batch_state_action_values([state])[0]
 
+    def step_optimizer(self, loss):
+        raise NotImplementedError
+
     def seed(self, seed=None):
         return self.exploration_policy.seed(seed)
 
     def reset(self):
         pass
 
+    def set_writer(self, writer):
+        super().set_writer(writer)
+        try:
+            self.exploration_policy.set_writer(writer)
+        except AttributeError:
+            pass
+
     def action_distribution(self, state):
         self.previous_state = state
         values = self.get_state_action_values(state)
-        self.exploration_policy.update(values, time=False)
+        self.exploration_policy.update(values)
         return self.exploration_policy.get_distribution()
+
+    def set_time(self, time):
+        self.exploration_policy.set_time(time)
 
     def eval(self):
         self.training = False

@@ -1,35 +1,22 @@
 """
 Usage:
-  experiments evaluate <environment> <agent> (--train|--test)
-                                             [--episodes <count>]
-                                             [--name-from-config]
-                                             [--no-display]
-                                             [--seed <str>]
-                                             [--analyze]
-                                             [--recover]
-                                             [--verbose]
-  experiments benchmark <benchmark> (--train|--test)
-                                    [--episodes <count>]
-                                    [--name-from-config]
-                                    [--no-display]
-                                    [--seed <str>]
-                                    [--analyze]
-                                    [--verbose]
-                                    [--processes <count>]
+  experiments evaluate <environment> <agent> (--train|--test) [options]
+  experiments benchmark <benchmark> (--train|--test) [options]
   experiments -h | --help
 
 Options:
-  -h --help            Show this screen.
-  --analyze            Automatically analyze the experiment results.
-  --episodes <count>   Number of episodes [default: 5].
-  --no-display         Disable environment, agent, and rewards rendering.
-  --name-from-config   Name the output folder from the corresponding config files
-  --processes <count>  Number of running processes [default: 4].
-  --recover            Load model from latest checkpoint.
-  --seed <str>         Seed the environments and agents.
-  --train              Train the agent.
-  --test               Test the agent.
-  --verbose            Set log level to debug instead of info.
+  -h --help              Show this screen.
+  --episodes <count>     Number of episodes [default: 5].
+  --no-display           Disable environment, agent, and rewards rendering.
+  --name-from-config     Name the output folder from the corresponding config files
+  --processes <count>    Number of running processes [default: 4].
+  --recover              Load model from the latest checkpoint.
+  --recover-from <file>  Load model from a given checkpoint.
+  --seed <str>           Seed the environments and agents.
+  --train                Train the agent.
+  --test                 Test the agent.
+  --verbose              Set log level to debug instead of info.
+  --repeat <times>       Repeat several times [default: 1].
 """
 import datetime
 import os
@@ -41,7 +28,6 @@ from itertools import product
 from multiprocessing.pool import Pool
 
 from rl_agents.trainer import logger
-from rl_agents.trainer.analyzer import RunAnalyzer
 from rl_agents.trainer.evaluation import Evaluation
 from rl_agents.agents.common.factory import load_agent, load_environment
 
@@ -53,7 +39,8 @@ VERBOSE_CONFIG = 'configs/verbose.json'
 def main():
     opts = docopt(__doc__)
     if opts['evaluate']:
-        evaluate(opts['<environment>'], opts['<agent>'], opts)
+        for _ in range(int(opts['--repeat'])):
+            evaluate(opts['<environment>'], opts['<agent>'], opts)
     elif opts['benchmark']:
         benchmark(opts)
 
@@ -71,14 +58,18 @@ def evaluate(environment_config, agent_config, options):
         logger.configure(VERBOSE_CONFIG)
     env = load_environment(environment_config)
     agent = load_agent(agent_config, env)
-    run_directory = Path(agent_config).with_suffix('').name if options['--name-from-config'] else None
+    run_directory = None
+    if options['--name-from-config']:
+        run_directory = "{}_{}_{}".format(Path(agent_config).with_suffix('').name,
+                                  datetime.datetime.now().strftime('%Y%m%d-%H%M%S'),
+                                  os.getpid())
     options['--seed'] = int(options['--seed']) if options['--seed'] is not None else None
     evaluation = Evaluation(env,
                             agent,
                             run_directory=run_directory,
                             num_episodes=int(options['--episodes']),
                             sim_seed=options['--seed'],
-                            recover=options['--recover'],
+                            recover=options['--recover'] or options['--recover-from'],
                             display_env=not options['--no-display'],
                             display_agent=not options['--no-display'],
                             display_rewards=not options['--no-display'])
@@ -88,9 +79,7 @@ def evaluate(environment_config, agent_config, options):
         evaluation.test()
     else:
         evaluation.close()
-    if options['--analyze'] and not options['<benchmark>']:
-        RunAnalyzer([evaluation.monitor.directory])
-    return os.path.relpath(evaluation.monitor.directory)
+    return os.path.relpath(evaluation.run_directory)
 
 
 def benchmark(options):
@@ -125,9 +114,6 @@ def benchmark(options):
     with open(benchmark_filename, 'w') as f:
         json.dump(results, f, sort_keys=True, indent=4)
         gym.logger.info('Benchmark done. Summary written in: {}'.format(benchmark_filename))
-
-    if options['--analyze']:
-        RunAnalyzer(results)
 
 
 def generate_agent_configs(benchmark_config, clean=False):
